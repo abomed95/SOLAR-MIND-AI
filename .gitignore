@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# SOLAR MIND AI
+.env.*
+!.env.example
+node_modules/
+.next/
+*.sqlite3

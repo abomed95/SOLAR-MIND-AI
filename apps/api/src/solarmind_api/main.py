@@ -6,7 +6,15 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from redis.asyncio import Redis
 
-from solarmind_api.api.v1 import admin, auth, equipment, health, organizations, telemetry
+from solarmind_api.api.v1 import (
+    admin,
+    auth,
+    energy,
+    equipment,
+    health,
+    organizations,
+    telemetry,
+)
 from solarmind_api.config import Settings, get_settings
 from solarmind_api.db import Database
 from solarmind_api.deps import rate_limit
@@ -80,6 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         equipment.devices,
         equipment.gateways,
         telemetry.router,
+        energy.router,
         admin.router,
     ):
         limited.include_router(router)

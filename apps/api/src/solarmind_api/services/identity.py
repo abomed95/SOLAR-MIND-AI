@@ -50,7 +50,12 @@ def _slugify(name: str) -> str:
 
 
 async def provision_organization(
-    s: AsyncSession, settings: Settings, name: str, *, plan: Plan | None = None, is_demo: bool = False
+    s: AsyncSession,
+    settings: Settings,
+    name: str,
+    *,
+    plan: Plan | None = None,
+    is_demo: bool = False,
 ) -> Organization:
     """Create an organization with its subscription and default alert rules."""
     from solarmind_api.services import alerts  # local import: alerts depends on models only
@@ -153,13 +158,17 @@ async def login(
             raise Unauthorized("Invalid MFA code", code="mfa_invalid")
 
     memberships = (
-        await s.execute(
-            select(Membership.organization_id)
-            .join(Organization, Organization.id == Membership.organization_id)
-            .where(Membership.user_id == user.id, Organization.is_active.is_(True))
-            .order_by(Membership.created_at)
+        (
+            await s.execute(
+                select(Membership.organization_id)
+                .join(Organization, Organization.id == Membership.organization_id)
+                .where(Membership.user_id == user.id, Organization.is_active.is_(True))
+                .order_by(Membership.created_at)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     if organization_id is not None and organization_id not in memberships:
         raise Forbidden("Not a member of this organization")
     active_org = organization_id or (memberships[0] if memberships else None)
@@ -352,7 +361,9 @@ async def accept_invitation(
         raise Unauthorized("Invalid password for the existing account", code="invalid_credentials")
 
     s.add(
-        Membership(organization_id=invitation.organization_id, user_id=user.id, role=invitation.role)
+        Membership(
+            organization_id=invitation.organization_id, user_id=user.id, role=invitation.role
+        )
     )
     invitation.accepted_at = _now()
     audit(s, action="invitation.accept", organization_id=invitation.organization_id,

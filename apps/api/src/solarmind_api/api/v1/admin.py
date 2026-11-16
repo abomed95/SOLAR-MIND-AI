@@ -7,8 +7,16 @@ from fastapi import APIRouter, Request
 from sqlalchemy import func, select
 
 from solarmind_api import schemas as sc
-from solarmind_api.deps import AppSettings, Page, Paging, SuperAdmin, SystemDB, client_ip, page
-from solarmind_api.deps import paginate
+from solarmind_api.deps import (
+    AppSettings,
+    Page,
+    Paging,
+    SuperAdmin,
+    SystemDB,
+    client_ip,
+    page,
+    paginate,
+)
 from solarmind_api.enums import BillingStatus, Role
 from solarmind_api.errors import NotFound
 from solarmind_api.models import BillingRecord, Device, Organization, Site, Subscription, User
@@ -79,9 +87,14 @@ async def list_subscriptions(_: SuperAdmin, s: SystemDB) -> list[dict[str, Any]]
         .order_by(Organization.name)
     )
     return [
-        {"organization_id": org_id, "organization_name": name, "plan": sub.plan,
-         "status": sub.status, "billing_cycle": sub.billing_cycle,
-         "current_period_end": sub.current_period_end}  # fmt: skip
+        {
+            "organization_id": org_id,
+            "organization_name": name,
+            "plan": sub.plan,
+            "status": sub.status,
+            "billing_cycle": sub.billing_cycle,
+            "current_period_end": sub.current_period_end,
+        }  # fmt: skip
         for org_id, name, sub in rows
     ]
 

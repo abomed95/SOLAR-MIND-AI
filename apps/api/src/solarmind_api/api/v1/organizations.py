@@ -37,7 +37,10 @@ async def get_current(s: TenantDB, auth: AuthContext = Perm()) -> Any:
 
 @org_router.patch("/current", response_model=sc.OrganizationOut)
 async def update_current(
-    data: sc.OrganizationUpdate, request: Request, s: TenantDB, auth: AuthContext = Perm(P.ORG_MANAGE)
+    data: sc.OrganizationUpdate,
+    request: Request,
+    s: TenantDB,
+    auth: AuthContext = Perm(P.ORG_MANAGE),
 ) -> Any:
     org = await s.get(Organization, auth.org)
     if org is None:
@@ -57,7 +60,9 @@ async def audit_logs(
     stmt = select(AuditLog).where(AuditLog.organization_id == auth.org)
     if action:
         stmt = stmt.where(AuditLog.action == action)
-    items, total = await paginate(s, stmt, params, {"created_at": AuditLog.created_at}, "-created_at")
+    items, total = await paginate(
+        s, stmt, params, {"created_at": AuditLog.created_at}, "-created_at"
+    )
     return page(items, total, params)
 
 
@@ -73,8 +78,14 @@ async def list_members(s: TenantDB, auth: AuthContext = Perm(P.USERS_READ)) -> l
         .order_by(User.full_name)
     )
     return [
-        sc.MemberOut(user_id=u.id, email=u.email, full_name=u.full_name, role=Role(m.role),
-                     mfa_enabled=u.mfa_enabled, joined_at=m.created_at)  # fmt: skip
+        sc.MemberOut(
+            user_id=u.id,
+            email=u.email,
+            full_name=u.full_name,
+            role=Role(m.role),
+            mfa_enabled=u.mfa_enabled,
+            joined_at=m.created_at,
+        )  # fmt: skip
         for u, m in rows
     ]
 
@@ -116,10 +127,7 @@ async def remove_member(
     user_id: uuid.UUID, request: Request, s: TenantDB, auth: AuthContext = Perm(P.USERS_MANAGE)
 ) -> None:
     membership = await _membership(s, auth.org, user_id)
-    if (
-        membership.role == Role.ORGANIZATION_ADMIN
-        and await identity.count_admins(s, auth.org) <= 1
-    ):
+    if membership.role == Role.ORGANIZATION_ADMIN and await identity.count_admins(s, auth.org) <= 1:
         raise Conflict("An organization needs at least one administrator", code="last_admin")
     await s.delete(membership)
     audit(s, action="member.remove", organization_id=auth.org, actor_id=auth.user_id,

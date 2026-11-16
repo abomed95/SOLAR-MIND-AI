@@ -527,7 +527,9 @@ class ReportOut(Out):
 
 
 class AskIn(In):
-    question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+    question: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
+    ]
     conversation_id: uuid.UUID | None = None
 
 

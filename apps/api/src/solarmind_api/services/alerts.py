@@ -26,7 +26,12 @@ def add_default_rules(session: AsyncSession, organization_id: uuid.UUID) -> None
     for name, category, metric, operator, threshold, severity in DEFAULT_RULES:
         session.add(
             AlertRule(
-                organization_id=organization_id, name=name, category=category,
-                metric_name=metric, operator=operator, threshold=threshold, severity=severity,
+                organization_id=organization_id,
+                name=name,
+                category=category,
+                metric_name=metric,
+                operator=operator,
+                threshold=threshold,
+                severity=severity,
             )  # fmt: skip
         )

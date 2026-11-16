@@ -49,7 +49,8 @@ async def build_me(
         )
     ).all()
     memberships = [
-        sc.MembershipSummary(organization_id=o, organization_name=n, role=Role(r)) for o, n, r in rows
+        sc.MembershipSummary(organization_id=o, organization_name=n, role=Role(r))
+        for o, n, r in rows
     ]
     role = next((m.role for m in memberships if m.organization_id == organization_id), None)
     organization = await s.get(Organization, organization_id) if role else None

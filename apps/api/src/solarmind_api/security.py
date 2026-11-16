@@ -9,6 +9,7 @@ from argon2 import PasswordHasher
 from argon2 import Type as Argon2Type
 from argon2.exceptions import InvalidHashError, VerificationError
 from cryptography.fernet import Fernet, InvalidToken
+from pyotp.totp import TOTP
 
 # Argon2id with the library's RFC 9106 "low memory" defaults.
 _hasher = PasswordHasher(type=Argon2Type.ID)
@@ -60,9 +61,9 @@ def new_totp_secret() -> str:
 
 
 def totp_uri(secret: str, email: str) -> str:
-    return pyotp.TOTP(secret).provisioning_uri(name=email, issuer_name="SOLAR MIND AI")
+    return TOTP(secret).provisioning_uri(name=email, issuer_name="SOLAR MIND AI")
 
 
 def verify_totp(secret: str, code: str) -> bool:
     # valid_window=1 tolerates one 30 s step of clock drift.
-    return pyotp.TOTP(secret).verify(code.strip(), valid_window=1)
+    return TOTP(secret).verify(code.strip(), valid_window=1)

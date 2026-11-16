@@ -7,7 +7,7 @@ integration; ``ManualPaymentProvider`` records invoices settled out of band.
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,8 +47,8 @@ async def get_entitlements(session: AsyncSession, org: uuid.UUID) -> Entitlement
 
 
 async def usage(session: AsyncSession, org: uuid.UUID) -> dict[Resource, int]:
-    async def count(model: type, *where: object) -> int:
-        stmt = select(func.count()).select_from(model).where(model.organization_id == org, *where)  # type: ignore[attr-defined]
+    async def count(model: Any, *where: Any) -> int:
+        stmt = select(func.count()).select_from(model).where(model.organization_id == org, *where)
         return await session.scalar(stmt) or 0
 
     pending = await count(

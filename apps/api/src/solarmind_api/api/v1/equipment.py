@@ -146,7 +146,10 @@ async def create_asset(
 
 @assets.patch("/{asset_id}", response_model=sc.AssetOut)
 async def update_asset(
-    asset_id: uuid.UUID, data: sc.AssetUpdate, s: TenantDB, auth: AuthContext = Perm(P.DEVICES_WRITE)
+    asset_id: uuid.UUID,
+    data: sc.AssetUpdate,
+    s: TenantDB,
+    auth: AuthContext = Perm(P.DEVICES_WRITE),
 ) -> Any:
     asset = await get_owned(s, Asset, asset_id, auth.org)
     _apply(asset, data.model_dump(exclude_unset=True))
@@ -178,7 +181,9 @@ def _device_out(device: Device, interval_s: int, now: datetime) -> sc.DeviceOut:
     return out
 
 
-async def _check_links(s: TenantDB, org: uuid.UUID, data: sc.DeviceCreate | sc.DeviceUpdate) -> None:
+async def _check_links(
+    s: TenantDB, org: uuid.UUID, data: sc.DeviceCreate | sc.DeviceUpdate
+) -> None:
     """Referenced rows must belong to the caller's organization."""
     if data.asset_id:
         await get_owned(s, Asset, data.asset_id, org)
@@ -275,7 +280,9 @@ async def create_gateway(
 ) -> Any:
     await get_owned(s, Site, data.site_id, auth.org)
     api_key = new_token()
-    gateway = Gateway(organization_id=auth.org, api_key_hash=hash_token(api_key), **data.model_dump())
+    gateway = Gateway(
+        organization_id=auth.org, api_key_hash=hash_token(api_key), **data.model_dump()
+    )
     s.add(gateway)
     await s.flush()
     audit(s, action="gateway.create", organization_id=auth.org, actor_id=auth.user_id,
@@ -296,9 +303,7 @@ async def rotate_gateway_key(
     gateway.api_key_hash = hash_token(api_key)
     audit(s, action="gateway.rotate_key", organization_id=auth.org, actor_id=auth.user_id,
           entity_type="gateway", entity_id=gateway.id, ip=client_ip(request))  # fmt: skip
-    return sc.GatewayCreated(
-        **sc.GatewayOut.model_validate(gateway).model_dump(), api_key=api_key
-    )
+    return sc.GatewayCreated(**sc.GatewayOut.model_validate(gateway).model_dump(), api_key=api_key)
 
 
 @gateways.delete("/{gateway_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -82,7 +82,9 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(320), unique=True)
     full_name: Mapped[str] = mapped_column(String(200))
     password_hash: Mapped[str] = mapped_column(String(255))
-    is_super_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    is_super_admin: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     mfa_secret_encrypted: Mapped[str | None] = mapped_column(Text)

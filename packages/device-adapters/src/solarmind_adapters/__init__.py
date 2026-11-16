@@ -1,0 +1,1 @@
+"""solarmind_adapters package."""

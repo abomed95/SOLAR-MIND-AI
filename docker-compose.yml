@@ -1,6 +1,20 @@
-# Development stack. Phase 1 scope: api + postgres (TimescaleDB) + redis + mqtt.
-# web, worker, simulator, object storage and the reverse proxy join in later phases.
+# Development stack. See docs/deployment/docker.md.
 name: solar-mind-ai
+
+x-python: &python
+  build:
+    context: .
+    dockerfile: infrastructure/docker/python.Dockerfile
+  image: solar-mind-ai-python
+
+x-app-env: &app-env
+  SOLARMIND_ENVIRONMENT: ${SOLARMIND_ENVIRONMENT:-development}
+  SOLARMIND_LOG_LEVEL: ${SOLARMIND_LOG_LEVEL:-INFO}
+  SOLARMIND_DATABASE_URL: postgresql+asyncpg://solarmind_app:${SOLARMIND_APP_DB_PASSWORD:?set SOLARMIND_APP_DB_PASSWORD in .env}@postgres:5432/${POSTGRES_DB}
+  SOLARMIND_REDIS_URL: redis://redis:6379/0
+  SOLARMIND_SECRET_KEY: ${SOLARMIND_SECRET_KEY:?set SOLARMIND_SECRET_KEY in .env}
+  SOLARMIND_COOKIE_SECURE: ${SOLARMIND_COOKIE_SECURE:-false}
+  SOLARMIND_WEB_BASE_URL: ${SOLARMIND_WEB_BASE_URL:-http://localhost:3000}
 
 services:
   postgres:
@@ -29,30 +43,26 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
 
-  mqtt:
-    image: eclipse-mosquitto:2.0.20
-    volumes:
-      - ./infrastructure/mqtt/mosquitto.dev.conf:/mosquitto/config/mosquitto.conf:ro
-      - mqtt-data:/mosquitto/data
-    healthcheck:
-      test: ["CMD-SHELL", "mosquitto_sub -h 127.0.0.1 -t '$$SYS/broker/uptime' -C 1 -W 3"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    # No published port: reachable only from the compose network in development.
-
-  api:
-    build:
-      context: ./apps/api
+  migrate:
+    <<: *python
+    command: ["alembic", "-c", "database/alembic.ini", "upgrade", "head"]
     environment:
-      SOLARMIND_ENVIRONMENT: ${SOLARMIND_ENVIRONMENT:-development}
-      SOLARMIND_LOG_LEVEL: ${SOLARMIND_LOG_LEVEL:-INFO}
-      SOLARMIND_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      SOLARMIND_REDIS_URL: redis://redis:6379/0
+      SOLARMIND_MIGRATION_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      SOLARMIND_APP_DB_PASSWORD: ${SOLARMIND_APP_DB_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
+
+  api:
+    <<: *python
+    environment:
+      <<: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     ports:
@@ -61,4 +71,3 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  mqtt-data:

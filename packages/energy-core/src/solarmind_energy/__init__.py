@@ -1,0 +1,1 @@
+"""solarmind_energy package."""

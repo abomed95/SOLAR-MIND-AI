@@ -1,0 +1,16 @@
+[project]
+name = "solarmind-adapters"
+version = "0.1.0"
+description = "Read-only device adapters and edge gateway runtime"
+requires-python = ">=3.12,<3.13"
+dependencies = ["solarmind-schemas", "pymodbus>=3.8,<3.9", "httpx>=0.27,<0.29", "aiomqtt>=2.3,<3"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/solarmind_adapters"]
+
+[tool.uv.sources]
+solarmind-schemas = { workspace = true }

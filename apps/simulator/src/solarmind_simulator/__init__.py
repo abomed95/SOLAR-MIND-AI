@@ -1,0 +1,1 @@
+"""SOLAR MIND AI simulator."""

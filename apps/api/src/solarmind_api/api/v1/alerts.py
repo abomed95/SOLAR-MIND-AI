@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, Request, status
-from solarmind_schemas import METRICS
 from sqlalchemy import select, update
 
 from solarmind_api import schemas as sc
@@ -34,6 +33,7 @@ from solarmind_api.models import (
 from solarmind_api.permissions import P
 from solarmind_api.services import alerts as svc
 from solarmind_api.services.audit import audit
+from solarmind_schemas import METRICS
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 notifications = APIRouter(prefix="/notifications", tags=["notifications"])
@@ -117,7 +117,9 @@ async def delete_rule(
 
 
 @router.get("/{alert_id}", response_model=sc.AlertOut)
-async def get_alert(alert_id: uuid.UUID, s: TenantDB, auth: AuthContext = Perm(P.ALERTS_READ)) -> Any:
+async def get_alert(
+    alert_id: uuid.UUID, s: TenantDB, auth: AuthContext = Perm(P.ALERTS_READ)
+) -> Any:
     return await get_owned(s, Alert, alert_id, auth.org)
 
 
@@ -182,8 +184,11 @@ async def list_notifications(
 async def mark_all_read(s: TenantDB, auth: AuthContext = Perm()) -> None:
     await s.execute(
         update(Notification)
-        .where(Notification.organization_id == auth.org, Notification.user_id == auth.user_id,
-               Notification.read_at.is_(None))  # fmt: skip
+        .where(
+            Notification.organization_id == auth.org,
+            Notification.user_id == auth.user_id,
+            Notification.read_at.is_(None),
+        )  # fmt: skip
         .values(read_at=datetime.now(UTC))
     )
 

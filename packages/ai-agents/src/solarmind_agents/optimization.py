@@ -8,9 +8,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from solarmind_energy import estimated_savings
-
 from solarmind_agents.types import Finding
+from solarmind_energy import estimated_savings
 
 _SEVERITY_WEIGHT = {"CRITICAL": 100, "HIGH": 60, "WARNING": 25, "INFO": 5}
 
@@ -140,6 +139,7 @@ def prioritize_maintenance(alerts: list[dict[str, Any]]) -> list[dict[str, Any]]
 
     Each alert: ``{"id", "title", "severity", "occurrence_count", "age_hours", ...}``.
     """
+
     def score(alert: dict[str, Any]) -> float:
         return float(
             _SEVERITY_WEIGHT.get(alert["severity"], 0)

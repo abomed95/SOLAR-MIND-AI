@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+
 from solarmind_adapters import Fault, FaultKind, PlantConfig, PlantModel, simulate
 from solarmind_agents import data_collector, fault_detection, optimization, performance, predictive
 from solarmind_agents.types import Reading
@@ -131,7 +132,10 @@ def test_thresholds_report_latest_violation_with_count() -> None:
         row(d2, site, "battery_soc_percent", 10.0, 5),
         row(d2, site, "inverter_temperature_c", 999.0, 5, quality="out_of_range"),
     ]
-    hits = {(h.rule.metric, h.device_id): h for h in fault_detection.evaluate_thresholds(rows, [hot, low])}
+    hits = {
+        (h.rule.metric, h.device_id): h
+        for h in fault_detection.evaluate_thresholds(rows, [hot, low])
+    }
     assert len(hits) == 2
     hit = hits[("inverter_temperature_c", d1)]
     assert (hit.count, hit.row["value"]) == (2, 90.0)
@@ -207,13 +211,17 @@ def test_isolation_forest_needs_data_and_labels_its_output_statistical() -> None
 
 
 def test_risk_requires_history() -> None:
-    risk = predictive.assess_risk(predictive.MaintenanceInputs(history_days=5, critical_alerts_30d=9))
+    risk = predictive.assess_risk(
+        predictive.MaintenanceInputs(history_days=5, critical_alerts_30d=9)
+    )
     assert risk.level == "INSUFFICIENT_DATA" and risk.score == 0
     assert "14" in risk.recommendation
 
 
 def test_risk_levels_and_factors() -> None:
-    quiet = predictive.assess_risk(predictive.MaintenanceInputs(history_days=60, availability_30d=0.99))
+    quiet = predictive.assess_risk(
+        predictive.MaintenanceInputs(history_days=60, availability_30d=0.99)
+    )
     assert (quiet.level, quiet.score, quiet.factors) == ("LOW", 0, ())
 
     medium = predictive.assess_risk(predictive.MaintenanceInputs(

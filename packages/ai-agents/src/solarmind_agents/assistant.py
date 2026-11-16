@@ -450,8 +450,8 @@ _INTENTS: list[tuple[str, tuple[str, ...]]] = [
                              "ameliorer", "conseil", "advice")),
     ("get_data_quality", ("quality", "qualite", "missing", "manquant", "gap", "trou",
                           "completude", "completeness")),
-    ("get_site_energy_summary", ("report", "rapport", "summary", "resume", "bilan", "production",
-                                 "produit", "produced", "energie", "energy", "consum", "consomm",
+    ("get_site_energy_summary", ("report", "rapport", "summary", "resume", "bilan", "produc", "generat",
+                                 "produit", "energie", "energy", "consum", "consomm",
                                  "kwh", "yield", "rendement", "performance", "export", "import")),
     ("get_live_status", ("status", "etat", "now", "maintenant", "current", "actuel", "live",
                          "direct", "puissance", "power", "battery", "batterie", "soc",
@@ -508,7 +508,9 @@ class DeterministicProvider:
                 targets = named or (sites if len(sites) <= 3 else [])
                 if not targets:
                     # Too many sites to detail: fall back to the comparison / overview.
-                    fallback = "compare_sites" if intent == "get_site_energy_summary" else "get_overview"
+                    fallback = (
+                        "compare_sites" if intent == "get_site_energy_summary" else "get_overview"
+                    )
                     arguments = {"days": days} if fallback == "compare_sites" else {}
                     calls.append(ToolCall("d2", fallback, arguments))
                 for n, site in enumerate(targets):
@@ -579,7 +581,9 @@ def _render_summary(data: dict[str, Any], lang: str) -> list[str]:
         lines.append(_figure(_L[lang][key], data.get(key), lang))
     savings = data.get("estimated_savings") or {}
     lines.append(_figure(_L[lang]["estimated_savings"], savings, lang))
-    for assumption in savings.get("assumptions", [])[:3] if savings.get("value") is not None else []:
+    for assumption in (
+        savings.get("assumptions", [])[:3] if savings.get("value") is not None else []
+    ):
         lines.append(f"  {_L[lang]['assumption']}: {assumption}")
     return lines
 

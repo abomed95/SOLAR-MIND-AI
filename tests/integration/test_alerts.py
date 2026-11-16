@@ -7,9 +7,9 @@ import psycopg
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
+
 from solarmind_api.services import alerts as alert_service
 from solarmind_api.services import notifications
-
 from tests.helpers import API, add_member, create_device, create_gateway, create_site, register
 
 pytestmark = pytest.mark.db
@@ -42,7 +42,8 @@ async def alerts(client: AsyncClient, plant: dict, **params: Any) -> list[dict]:
 
 
 async def test_threshold_violation_raises_an_alert_with_evidence(
-    client: AsyncClient, plant: dict  # type: ignore[type-arg]
+    client: AsyncClient,
+    plant: dict,  # type: ignore[type-arg]
 ) -> None:
     await send(client, plant, 10, inverter_temperature_c=60.0)  # normal
     assert await alerts(client, plant) == []
@@ -86,7 +87,9 @@ async def test_flagged_values_do_not_trigger_alerts(client: AsyncClient, plant: 
 
 
 async def test_alert_lifecycle_history_and_reopening(
-    client: AsyncClient, app: FastAPI, plant: dict  # type: ignore[type-arg]
+    client: AsyncClient,
+    app: FastAPI,
+    plant: dict,  # type: ignore[type-arg]
 ) -> None:
     admin = plant["admin"]
     technician = await add_member(client, app, admin, "TECHNICIAN")
@@ -124,7 +127,9 @@ async def test_alert_lifecycle_history_and_reopening(
     assert len(await alerts(client, plant)) == 2
 
 
-async def test_alert_permissions_and_isolation(client: AsyncClient, app: FastAPI, plant: dict) -> None:  # type: ignore[type-arg]
+async def test_alert_permissions_and_isolation(
+    client: AsyncClient, app: FastAPI, plant: dict
+) -> None:  # type: ignore[type-arg]
     admin = plant["admin"]
     viewer = await add_member(client, app, admin, "VIEWER")
     technician = await add_member(client, app, admin, "TECHNICIAN")
@@ -140,7 +145,9 @@ async def test_alert_permissions_and_isolation(client: AsyncClient, app: FastAPI
 
     intruder = await register(client, "Intruder")
     assert (await client.get(url, headers=intruder.headers)).status_code == 404
-    assert (await client.post(f"{url}/resolve", json={}, headers=intruder.headers)).status_code == 404
+    assert (
+        await client.post(f"{url}/resolve", json={}, headers=intruder.headers)
+    ).status_code == 404
     assert (await client.get(f"{url}/events", headers=intruder.headers)).status_code == 404
     assert (await client.get(f"{API}/alerts", headers=intruder.headers)).json()["total"] == 0
     # Assigning to someone outside the organization is refused.
@@ -185,7 +192,9 @@ async def test_configurable_rules(client: AsyncClient, plant: dict) -> None:  # 
 
 
 async def test_offline_device_detection_and_auto_resolution(
-    client: AsyncClient, app: FastAPI, plant: dict  # type: ignore[type-arg]
+    client: AsyncClient,
+    app: FastAPI,
+    plant: dict,  # type: ignore[type-arg]
 ) -> None:
     await send(client, plant, 60, pv_power_kw=10.0)  # last heard an hour ago (interval 5 min)
     async with app.state.db.system() as s:
@@ -209,7 +218,10 @@ async def test_offline_device_detection_and_auto_resolution(
 
 
 async def test_notifications_preferences_and_delivery_retries(
-    client: AsyncClient, app: FastAPI, plant: dict, owner_dsn: str  # type: ignore[type-arg]
+    client: AsyncClient,
+    app: FastAPI,
+    plant: dict,
+    owner_dsn: str,  # type: ignore[type-arg]
 ) -> None:
     admin = plant["admin"]
     quiet = await add_member(client, app, admin, "VIEWER")

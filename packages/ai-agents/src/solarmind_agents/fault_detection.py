@@ -12,9 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from solarmind_energy import linear_trend
-
 from solarmind_agents.types import Finding
+from solarmind_energy import linear_trend
 
 
 @dataclass(frozen=True)
@@ -110,8 +109,10 @@ def detect_underperformance(
         ),
         basis="calculated",
         evidence={
-            "from": worst[0][0].isoformat(), "to": worst[-1][0].isoformat(),
-            "samples": len(worst), "mean_measured_kw": round(measured, 2),
+            "from": worst[0][0].isoformat(),
+            "to": worst[-1][0].isoformat(),
+            "samples": len(worst),
+            "mean_measured_kw": round(measured, 2),
             "mean_expected_kw": round(expected_mean, 2),
             "ratio": round(measured / expected_mean, 3) if expected_mean else None,
         },  # fmt: skip
@@ -159,9 +160,12 @@ def detect_degradation(
         ),
         basis="calculated",
         evidence={
-            "days": len(daily_ratio), "fitted_start": round(start_value, 4),
-            "fitted_end": round(end_value, 4), "relative_drop": round(drop, 4),
-            "slope_per_day": round(trend.slope, 6), "r_squared": round(trend.r_squared, 3),
+            "days": len(daily_ratio),
+            "fitted_start": round(start_value, 4),
+            "fitted_end": round(end_value, 4),
+            "relative_drop": round(drop, 4),
+            "slope_per_day": round(trend.slope, 6),
+            "r_squared": round(trend.r_squared, 3),
         },  # fmt: skip
         assumptions=(
             "A linear fit describes the period; seasonal and weather effects are not modelled.",

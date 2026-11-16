@@ -60,7 +60,8 @@ def analyze(
             None if production is None else _round(specific_yield(production, capacity_kwp))
         ),
         "performance_ratio": (
-            None if production is None
+            None
+            if production is None
             else _round(performance_ratio(production, insolation or 0.0, capacity_kwp))
         ),  # fmt: skip
         "best_day": _day(best),

@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 import pytest
 from pydantic import BaseModel
+
 from solarmind_agents.assistant import (
     SYSTEM_PROMPT,
     Assistant,
@@ -163,7 +164,9 @@ async def test_hallucinated_figures_fall_back_to_the_deterministic_answer() -> N
         call("get_site_energy_summary", site_id=SITE_ID, days=7),
         LLMResponse(content="Seaside Hotel produced 12,000 kWh this week, a great result!"),
     )
-    answer = await Assistant(provider).answer("How much did Seaside Hotel produce this week?", tools())
+    answer = await Assistant(provider).answer(
+        "How much did Seaside Hotel produce this week?", tools()
+    )
     assert answer.provider == "deterministic"
     assert answer.fallback_reason == "ungrounded_figures: [12000.0]"
     assert "8,423.50 kWh" in answer.text and "12,000" not in answer.text
@@ -171,7 +174,9 @@ async def test_hallucinated_figures_fall_back_to_the_deterministic_answer() -> N
 
 async def test_llm_outage_falls_back() -> None:
     provider = ScriptedProvider(LLMUnavailable("HTTP 503"))
-    answer = await Assistant(provider).answer("Production de Seaside Hotel cette semaine ?", tools())
+    answer = await Assistant(provider).answer(
+        "Production de Seaside Hotel cette semaine ?", tools()
+    )
     assert answer.provider == "deterministic"
     assert answer.fallback_reason == "llm_unavailable: HTTP 503"
     assert "8,423.50 kWh" in answer.text
@@ -180,7 +185,9 @@ async def test_llm_outage_falls_back() -> None:
 async def test_a_model_that_never_answers_is_cut_off() -> None:
     provider = ScriptedProvider(*[call("list_sites") for _ in range(6)])
     answer = await Assistant(provider).answer("What is the status?", tools())
-    assert answer.provider == "deterministic" and "too many tool rounds" in (answer.fallback_reason or "")
+    assert answer.provider == "deterministic" and "too many tool rounds" in (
+        answer.fallback_reason or ""
+    )
 
 
 async def test_unknown_tools_and_bad_arguments_return_errors_not_crashes() -> None:
@@ -273,9 +280,7 @@ async def test_openai_provider_request_and_tool_call_parsing() -> None:
                 "arguments": json.dumps({"site_id": SITE_ID, "days": 7})}}],
         }}]})  # fmt: skip
 
-    response = await openai_provider(handler).complete(
-        [{"role": "user", "content": "hi"}], tools()
-    )
+    response = await openai_provider(handler).complete([{"role": "user", "content": "hi"}], tools())
     assert response.tool_calls == (
         ToolCall("call_1", "get_site_energy_summary", {"site_id": SITE_ID, "days": 7}),)  # fmt: skip
     assert captured["url"] == "https://llm.invalid/v1/chat/completions"

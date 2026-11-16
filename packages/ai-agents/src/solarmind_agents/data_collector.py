@@ -9,9 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
 
-from solarmind_schemas import METRICS
-
 from solarmind_agents.types import Reading
+from solarmind_schemas import METRICS
 
 Communication = Literal["ok", "degraded", "lost", "never_seen"]
 
@@ -51,8 +50,11 @@ class QualityReport:
             "flagged": self.flagged,
             "future_timestamps": self.future_timestamps,
             "gaps": [
-                {"start": g.start.isoformat(), "end": g.end.isoformat(),
-                 "missing_samples": g.missing_samples}  # fmt: skip
+                {
+                    "start": g.start.isoformat(),
+                    "end": g.end.isoformat(),
+                    "missing_samples": g.missing_samples,
+                }  # fmt: skip
                 for g in self.gaps
             ],
             "last_sample_at": self.last_sample_at.isoformat() if self.last_sample_at else None,

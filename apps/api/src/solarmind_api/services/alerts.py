@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from solarmind_agents.fault_detection import ThresholdRule, evaluate_thresholds
 from solarmind_api.enums import (
     AlertCategory,
     AlertStatus,
@@ -35,7 +36,6 @@ from solarmind_api.models import (
     User,
 )
 from solarmind_api.permissions import P, permissions_for
-from solarmind_agents.fault_detection import ThresholdRule, evaluate_thresholds
 from solarmind_schemas import METRICS
 
 # Generic starting points, editable per organization. They are deliberately
@@ -192,8 +192,9 @@ async def evaluate_rows(
     if not rows:
         return []
     rules = [
-        ThresholdRule(r.id, r.name, r.metric_name, r.operator, r.threshold, r.severity,
-                      r.category, r.site_id)  # fmt: skip
+        ThresholdRule(
+            r.id, r.name, r.metric_name, r.operator, r.threshold, r.severity, r.category, r.site_id
+        )  # fmt: skip
         for r in await s.scalars(
             select(AlertRule).where(
                 AlertRule.organization_id == organization_id, AlertRule.enabled.is_(True)

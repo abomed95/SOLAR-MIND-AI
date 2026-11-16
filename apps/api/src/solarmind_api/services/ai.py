@@ -11,6 +11,9 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from solarmind_agents import data_collector, fault_detection, optimization, performance, predictive
 from solarmind_agents.assistant import (
     Assistant,
@@ -21,11 +24,6 @@ from solarmind_agents.assistant import (
     ToolError,
 )
 from solarmind_agents.types import Reading
-from solarmind_energy import performance_ratio, specific_yield
-from solarmind_schemas import METRICS
-from sqlalchemy import func, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from solarmind_api.config import Settings
 from solarmind_api.deps import AuthContext
 from solarmind_api.enums import AlertCategory, AlertStatus, Severity, TicketStatus
@@ -42,6 +40,8 @@ from solarmind_api.permissions import P
 from solarmind_api.plans import Feature
 from solarmind_api.services import billing, energy
 from solarmind_api.services.audit import audit
+from solarmind_energy import performance_ratio, specific_yield
+from solarmind_schemas import METRICS
 
 PRIMARY_METRIC = {
     "INVERTER": "pv_power_kw",
@@ -66,9 +66,11 @@ async def daily_energy(
     rows = await energy.site_daily(s, org, site, start, end)
     return [
         performance.DailyEnergy(
-            day=r["day"], production_kwh=r.get("production_kwh"),
+            day=r["day"],
+            production_kwh=r.get("production_kwh"),
             consumption_kwh=r.get("consumption_kwh"),
-            insolation_kwh_m2=r.get("insolation_kwh_m2"), coverage=r.get("coverage", 0.0),
+            insolation_kwh_m2=r.get("insolation_kwh_m2"),
+            coverage=r.get("coverage", 0.0),
         )  # fmt: skip
         for r in rows
     ]
@@ -114,7 +116,9 @@ async def performance_report(
     start, end = _window(days)
     current = await daily_energy(s, org, site, start, end)
     previous = await daily_energy(s, org, site, start - timedelta(days=days), start)
-    report = performance.analyze(current, capacity_kwp=site.installed_capacity_kwp, previous=previous)
+    report = performance.analyze(
+        current, capacity_kwp=site.installed_capacity_kwp, previous=previous
+    )
     return {"site": site.name, "simulated": site.is_simulated,
             "period": {"start": start, "end": end}, **report}  # fmt: skip
 
@@ -164,8 +168,12 @@ async def anomalies(
         )
     ).all()
     findings = []
-    paired = [(r.time, r.pv, r.irradiance) for r in rows if r.pv is not None and r.irradiance is not None]
-    under = fault_detection.detect_underperformance(paired, capacity_kwp=site.installed_capacity_kwp)
+    paired = [
+        (r.time, r.pv, r.irradiance) for r in rows if r.pv is not None and r.irradiance is not None
+    ]
+    under = fault_detection.detect_underperformance(
+        paired, capacity_kwp=site.installed_capacity_kwp
+    )
     if under:
         findings.append(under.as_dict())
 
@@ -187,10 +195,16 @@ async def anomalies(
     notes = []
     if statistical:
         features = [
-            {"time": r.time, "pv_ratio": r.pv / site.installed_capacity_kwp,
-             "irradiance": r.irradiance, "inverter_temperature": r.temp}  # fmt: skip
+            {
+                "time": r.time,
+                "pv_ratio": r.pv / site.installed_capacity_kwp,
+                "irradiance": r.irradiance,
+                "inverter_temperature": r.temp,
+            }  # fmt: skip
             for r in rows
-            if r.pv is not None and r.irradiance is not None and r.temp is not None
+            if r.pv is not None
+            and r.irradiance is not None
+            and r.temp is not None
             and r.irradiance > 50
         ]
         outliers = fault_detection.isolation_forest_outliers(
@@ -218,9 +232,13 @@ async def maintenance_risk(s: AsyncSession, org: uuid.UUID, site: Site) -> dict[
     async def alerts(*where: Any) -> int:
         return (
             await s.scalar(
-                select(func.count()).select_from(Alert).where(
-                    Alert.organization_id == org, Alert.site_id == site.id,
-                    Alert.first_seen_at >= start, *where,
+                select(func.count())
+                .select_from(Alert)
+                .where(
+                    Alert.organization_id == org,
+                    Alert.site_id == site.id,
+                    Alert.first_seen_at >= start,
+                    *where,
                 )  # fmt: skip
             )
             or 0
@@ -232,8 +250,11 @@ async def maintenance_risk(s: AsyncSession, org: uuid.UUID, site: Site) -> dict[
     degradation = fault_detection.detect_degradation(indicator)
     availability = await energy._availability(s, org, site, max(start, first or start), end)
     open_tickets = await s.scalar(
-        select(func.count()).select_from(MaintenanceTicket).where(
-            MaintenanceTicket.organization_id == org, MaintenanceTicket.site_id == site.id,
+        select(func.count())
+        .select_from(MaintenanceTicket)
+        .where(
+            MaintenanceTicket.organization_id == org,
+            MaintenanceTicket.site_id == site.id,
             MaintenanceTicket.status.notin_([TicketStatus.RESOLVED, TicketStatus.CLOSED]),
         )  # fmt: skip
     )
@@ -523,18 +544,24 @@ async def ask(
         conversation = found
         previous = await s.scalars(
             select(AIMessage)
-            .where(AIMessage.conversation_id == conversation.id, AIMessage.organization_id == auth.org)
+            .where(
+                AIMessage.conversation_id == conversation.id, AIMessage.organization_id == auth.org
+            )
             .order_by(AIMessage.created_at, AIMessage.id)
         )
         history = [{"role": m.role, "content": m.content} for m in previous]
 
     answer = await Assistant(provider).answer(question, build_tools(s, auth), history)
+    # Both rows are written in one transaction, where now() is constant:
+    # explicit timestamps keep the question strictly before its answer.
+    asked_at = datetime.now(UTC)
     s.add(AIMessage(organization_id=auth.org, conversation_id=conversation.id, role="user",
-                    content=question))  # fmt: skip
+                    content=question, created_at=asked_at))  # fmt: skip
     await s.flush()
     reply = AIMessage(
         organization_id=auth.org, conversation_id=conversation.id, role="assistant",
         content=answer.text, provider=answer.provider,
+        created_at=asked_at + timedelta(microseconds=1),
         # Which tools were called and with what, for audit. Results are not stored.
         tool_calls=[
             {"name": c["name"], "arguments": _jsonable(c["arguments"]),

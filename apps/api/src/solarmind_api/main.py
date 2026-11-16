@@ -8,6 +8,8 @@ from redis.asyncio import Redis
 
 from solarmind_api.api.v1 import (
     admin,
+    ai,
+    alerts,
     auth,
     energy,
     equipment,
@@ -21,6 +23,7 @@ from solarmind_api.deps import rate_limit
 from solarmind_api.errors import install_error_handlers
 from solarmind_api.logging import configure_logging
 from solarmind_api.security import SecretBox
+from solarmind_api.services.ai import build_provider
 from solarmind_api.services.mail import build_mailer
 
 _SECURITY_HEADERS = {
@@ -60,6 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.redis = redis_client
     app.state.secret_box = SecretBox(settings.secret_key.get_secret_value())
     app.state.mailer = build_mailer(settings)
+    app.state.llm_provider = build_provider(settings)
 
     async def _redis_ping() -> None:
         await redis_client.ping()
@@ -89,6 +93,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         equipment.gateways,
         telemetry.router,
         energy.router,
+        alerts.router,
+        alerts.notifications,
+        ai.router,
         admin.router,
     ):
         limited.include_router(router)

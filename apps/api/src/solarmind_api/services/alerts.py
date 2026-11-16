@@ -35,6 +35,7 @@ from solarmind_api.models import (
     User,
 )
 from solarmind_api.permissions import P, permissions_for
+from solarmind_agents.fault_detection import ThresholdRule, evaluate_thresholds
 from solarmind_schemas import METRICS
 
 # Generic starting points, editable per organization. They are deliberately
@@ -186,62 +187,41 @@ async def raise_alert(
 async def evaluate_rows(
     s: AsyncSession, organization_id: uuid.UUID, rows: list[dict[str, Any]]
 ) -> list[Alert]:
-    """Apply the organization's threshold rules to freshly stored telemetry."""
-    valid = [r for r in rows if r["quality"] == "valid"]  # never alert on flagged data
-    if not valid:
+    """Apply the organization's threshold rules (agent 3) to freshly stored
+    telemetry and raise or refresh the corresponding alerts."""
+    if not rows:
         return []
-    rules = (
-        await s.scalars(
+    rules = [
+        ThresholdRule(r.id, r.name, r.metric_name, r.operator, r.threshold, r.severity,
+                      r.category, r.site_id)  # fmt: skip
+        for r in await s.scalars(
             select(AlertRule).where(
                 AlertRule.organization_id == organization_id, AlertRule.enabled.is_(True)
             )
         )
-    ).all()
-    by_metric: dict[str, list[AlertRule]] = {}
-    for rule in rules:
-        by_metric.setdefault(rule.metric_name, []).append(rule)
-
-    # (rule, device) -> [most recent violating row, number of violations]
-    hits: dict[tuple[uuid.UUID, uuid.UUID], list[Any]] = {}
-    for row in valid:
-        for rule in by_metric.get(row["metric_name"], ()):
-            if rule.site_id is not None and rule.site_id != row["site_id"]:
-                continue
-            value = row["value"]
-            violated = (
-                value > rule.threshold
-                if rule.operator == RuleOperator.GT
-                else value < rule.threshold
-            )
-            if not violated:
-                continue
-            hit = hits.setdefault((rule.id, row["device_id"]), [row, 0])
-            hit[1] += 1
-            if row["time"] > hit[0]["time"]:
-                hit[0] = row
-
-    rule_by_id = {rule.id: rule for rule in rules}
+    ]
     raised = []
-    for (rule_id, device_id), (row, count) in hits.items():
-        rule = rule_by_id[rule_id]
-        unit = METRICS[rule.metric_name].unit
+    for hit in evaluate_thresholds(rows, rules):
+        rule, row = hit.rule, hit.row
+        unit = METRICS[rule.metric].unit
         symbol = ">" if rule.operator == RuleOperator.GT else "<"
         alert, _ = await raise_alert(
-            s, organization_id=organization_id, site_id=row["site_id"], device_id=device_id,
-            rule_id=rule.id, dedup_key=f"rule:{rule.id}:device:{device_id}",
+            s, organization_id=organization_id, site_id=row["site_id"], device_id=hit.device_id,
+            rule_id=rule.id, dedup_key=f"rule:{rule.id}:device:{hit.device_id}",
             category=AlertCategory(rule.category), severity=Severity(rule.severity),
             title=rule.name,
             message=(
-                f"{rule.metric_name} = {row['value']:.2f} {unit} "
+                f"{rule.metric} = {row['value']:.2f} {unit} "
                 f"(threshold {symbol} {rule.threshold:g} {unit}) "
                 f"at {row['time'].isoformat()}"
             ),
             evidence={
-                "kind": "threshold", "metric": rule.metric_name, "value": row["value"],
+                "kind": "threshold", "metric": rule.metric, "value": row["value"],
                 "unit": unit, "operator": rule.operator, "threshold": rule.threshold,
                 "measured_at": row["time"].isoformat(), "source": row["source"],
+                "violations_in_batch": hit.count,
             },
-            seen_at=row["time"], occurrences=count,
+            seen_at=row["time"], occurrences=hit.count,
         )  # fmt: skip
         raised.append(alert)
     return raised

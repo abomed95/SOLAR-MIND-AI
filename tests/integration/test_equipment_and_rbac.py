@@ -39,7 +39,7 @@ async def test_site_crud_and_audit(client: AsyncClient) -> None:
             "installed_capacity_kwp": 10,
             "organization_id": "00000000-0000-0000-0000-000000000000",
         },
-        {"name": "x", "installed_capacity_kwp": 10, "is_simulated": True},
+        {"name": "x", "installed_capacity_kwp": 10, "is_simulated": "maybe"},
         {"name": "x"},
     ],
 )

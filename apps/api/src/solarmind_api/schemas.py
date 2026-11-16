@@ -246,7 +246,9 @@ class SiteBase(In):
 
 
 class SiteCreate(SiteBase):
-    pass
+    # Declares the site as a simulation. Settable at creation only: simulated
+    # equipment can never later be presented as real.
+    is_simulated: bool = False
 
 
 class SiteUpdate(In):
@@ -314,6 +316,7 @@ class DeviceCreate(In):
     protocol: DeviceProtocol = DeviceProtocol.MOCK
     asset_id: uuid.UUID | None = None
     gateway_id: uuid.UUID | None = None
+    is_simulated: bool = False
 
 
 class DeviceUpdate(In):

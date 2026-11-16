@@ -1,0 +1,5 @@
+user worker
+topic read solarmind/v1/+/telemetry
+
+user gateway
+topic write solarmind/v1/+/telemetry

@@ -46,6 +46,31 @@ services:
     ports:
       - "127.0.0.1:${REDIS_PORT:-6379}:6379"
 
+  mqtt:
+    image: eclipse-mosquitto:2.0.20
+    environment:
+      MQTT_WORKER_PASSWORD: ${MQTT_WORKER_PASSWORD:?set MQTT_WORKER_PASSWORD in .env}
+      MQTT_GATEWAY_PASSWORD: ${MQTT_GATEWAY_PASSWORD:?set MQTT_GATEWAY_PASSWORD in .env}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        mkdir -p /mosquitto/run
+        mosquitto_passwd -b -c /mosquitto/run/passwd worker "$$MQTT_WORKER_PASSWORD"
+        mosquitto_passwd -b /mosquitto/run/passwd gateway "$$MQTT_GATEWAY_PASSWORD"
+        chown -R mosquitto:mosquitto /mosquitto/run
+        exec mosquitto -c /mosquitto/config/mosquitto.conf
+    volumes:
+      - ./infrastructure/mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./infrastructure/mqtt/acl:/mosquitto/config/acl:ro
+      - mqtt-data:/mosquitto/data
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 1883"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "127.0.0.1:${MQTT_PORT:-1883}:1883"
+
   migrate:
     <<: *python
     command: ["alembic", "-c", "database/alembic.ini", "upgrade", "head"]
@@ -71,3 +96,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  mqtt-data:

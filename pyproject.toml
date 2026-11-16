@@ -41,7 +41,7 @@ ignore = ["B008", "E501"]  # line length is enforced by the formatter
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106", "S311", "E501"]
 "packages/device-adapters/src/solarmind_adapters/mock.py" = ["S311"]
-"apps/simulator/*" = ["S311"]
+"apps/simulator/*" = ["S311", "ASYNC240"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["solarmind_api", "solarmind_schemas", "solarmind_energy", "solarmind_adapters", "solarmind_agents", "solarmind_simulator", "tests"]

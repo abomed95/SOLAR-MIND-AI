@@ -62,6 +62,14 @@ Security, with the organization set per transaction
 **not** the table owner and has no `BYPASSRLS`, otherwise RLS is silently
 skipped. Cross-tenant tests run against real PostgreSQL, not mocks.
 
+*Limit (audit 2026-11, S-01):* the context variables can be set by any SQL
+the application role runs, including `app.rls_bypass`. Layer 2 therefore
+catches a **forgotten filter**, not an SQL injection. A signed context is
+proposed in `docs/audit/2026-11-audit-performance-securite.md` §4.1.
+Policies call the context functions through scalar sub-selects
+(`(SELECT app_current_org())`, migration 0005) so they are evaluated once per
+statement, not once per row.
+
 ### ADR-003 Telemetry storage: narrow hypertable
 One row per `(time, device_id, metric_name)` with a numeric value, a quality
 flag and a source flag (`MEASURED` or `SIMULATED`). A narrow layout accepts new
@@ -89,6 +97,37 @@ not appear in `repr` or logs.
 ### ADR-007 LLM provider behind an interface *(planned)*
 The assistant depends on an `LLMProvider` protocol. A deterministic provider
 (no network) is the default for tests and for operation without credentials.
+
+### ADR-008 Read cache for analytics (implemented)
+`energy/overview` and `ai/insights` are cached in Redis (cache-aside, TTL 30 s
+and 300 s). Keys start with the organization id; authorization runs before
+the cache is read; plan-dependent options are part of the key; Redis failures
+fall back to computing. Site and device writes invalidate the organization's
+entries in a background task, after commit. Telemetry ingestion does not
+invalidate: freshness is bounded by the TTL and shown by `generated_at` and
+the `X-Cache` header. Within one analysis pass, `ai.analysis_scope()` freezes
+the clock and memoizes daily integrals so agents share one computation.
+
+### ADR-009 HTTP edge as plain ASGI middleware (implemented)
+`EdgeMiddleware` resolves the client address (``X-Forwarded-For`` from
+`trusted_proxies` only), assigns an `X-Request-ID` that every log line of the
+request carries, writes the JSON access log, adds security headers (HSTS when
+`cookie_secure`) and enforces body size limits (1 MiB API, 8 MiB ingestion)
+before parsing. Plain ASGI avoids `BaseHTTPMiddleware`'s per-request task and
+stream.
+
+### ADR-010 Account-level brute-force protection (implemented)
+Besides per-IP limits, failed passwords and MFA codes are counted per account
+in Redis (`AccountGuard`); past the threshold the account refuses attempts for
+the window, and used TOTP codes cannot be replayed. Fails closed when Redis is
+down. Accepted trade-off: a known e-mail can be locked out temporarily.
+
+### ADR-011 Bounded resources per request (implemented)
+Every API statement has a `statement_timeout` (default 15 s, set per
+connection); the worker has none. The assistant is limited per user and sends
+at most `ai_history_max_messages` previous messages to the LLM. Notification
+delivery never holds a transaction while calling a provider (claim, send,
+record; 5-minute lease).
 
 ## 4. Known gaps
 

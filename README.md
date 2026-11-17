@@ -53,3 +53,6 @@ docs/                architecture, api, deployment, security, testing
 ```
 
 Architecture and decisions: [`docs/architecture/system-design.md`](docs/architecture/system-design.md).
+Latest performance and security audit:
+[`docs/audit/2026-11-audit-performance-securite.md`](docs/audit/2026-11-audit-performance-securite.md)
+(benchmark: `scripts/bench/`).

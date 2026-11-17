@@ -80,7 +80,8 @@ async def periodic(
 async def run(settings: Settings | None = None) -> None:
     settings = settings or get_settings()
     configure_logging(settings.log_level)
-    db = Database(settings.database_url.get_secret_value())
+    # Background jobs scan all tenants: no API statement timeout here.
+    db = Database.from_settings(settings, statement_timeout=False)
     providers = notifications.build_providers(settings, build_mailer(settings))
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, TypeVar
 
-from fastapi import Depends, Query, Request
+from fastapi import BackgroundTasks, Depends, Query, Request
 from pydantic import BaseModel
 from redis.exceptions import RedisError
 from sqlalchemy import Select, func, select
@@ -30,6 +30,7 @@ from solarmind_api.errors import (
 from solarmind_api.models import Membership, Organization, Session, User
 from solarmind_api.permissions import P, permissions_for
 from solarmind_api.security import hash_token
+from solarmind_api.services import cache, throttle
 
 SESSION_COOKIE = "sm_session"
 CSRF_HEADER = "x-solarmind-csrf"
@@ -58,6 +59,10 @@ class AuthContext:
 
 
 def client_ip(request: Request) -> str:
+    """Client address as resolved by ``EdgeMiddleware`` (trusted proxies honoured)."""
+    resolved: str | None = getattr(request.state, "client_ip", None)
+    if resolved:
+        return resolved
     return request.client.host if request.client else "unknown"
 
 
@@ -82,39 +87,40 @@ async def get_auth(request: Request) -> AuthContext:
         if request.headers.get(CSRF_HEADER) != "1":
             raise Forbidden("Missing CSRF header", code="csrf")
 
+    # One round trip: session, user and the membership of the session's
+    # organization (if still valid) come back together. This runs on every
+    # authenticated request.
     async with request.app.state.db.system() as s:
         row = (
             await s.execute(
-                select(Session, User)
+                select(Session, User, Membership.role, Organization.id)
                 .join(User, User.id == Session.user_id)
+                .outerjoin(
+                    Membership,
+                    (Membership.user_id == Session.user_id)
+                    & (Membership.organization_id == Session.organization_id),
+                )
+                .outerjoin(
+                    Organization,
+                    (Organization.id == Membership.organization_id)
+                    & Organization.is_active.is_(True),
+                )
                 .where(Session.token_hash == hash_token(token))
             )
         ).first()
-        if row is None:
-            raise Unauthorized("Invalid session")
-        session, user = row
-        if session.revoked_at is not None or session.expires_at <= datetime.now(UTC):
-            raise Unauthorized("Session expired", code="session_expired")
-        if not user.is_active:
-            raise Unauthorized("Account disabled")
+    if row is None:
+        raise Unauthorized("Invalid session")
+    session, user, membership_role, active_org = row
+    if session.revoked_at is not None or session.expires_at <= datetime.now(UTC):
+        raise Unauthorized("Session expired", code="session_expired")
+    if not user.is_active:
+        raise Unauthorized("Account disabled")
 
-        organization_id, role = None, None
-        if session.organization_id is not None:
-            membership = (
-                await s.execute(
-                    select(Membership.role)
-                    .join(Organization, Organization.id == Membership.organization_id)
-                    .where(
-                        Membership.organization_id == session.organization_id,
-                        Membership.user_id == user.id,
-                        Organization.is_active.is_(True),
-                    )
-                )
-            ).scalar_one_or_none()
-            # Membership removed or organization suspended since login: the
-            # session stays valid but loses its organization.
-            if membership is not None:
-                organization_id, role = session.organization_id, Role(membership)
+    # Membership removed or organization suspended since login: the session
+    # stays valid but loses its organization.
+    organization_id, role = None, None
+    if membership_role is not None and active_org is not None:
+        organization_id, role = session.organization_id, Role(membership_role)
 
     return AuthContext(
         user_id=user.id,
@@ -166,6 +172,17 @@ async def system_session(request: Request) -> AsyncIterator[AsyncSession]:
         yield session
 
 
+async def bust_org_cache(
+    request: Request, background: BackgroundTasks, auth: Annotated[AuthContext, Depends(get_auth)]
+) -> None:
+    """Route dependency for writes that change cached analytics (sites,
+    devices). Runs as a background task, i.e. after the transaction commits
+    and the response is sent, so no request can re-cache the old state."""
+    if auth.organization_id is not None:
+        background.add_task(cache.invalidate_org, request.app.state.redis, auth.organization_id)
+
+
+BustCache = Depends(bust_org_cache)
 Auth = Annotated[AuthContext, Depends(get_auth)]
 SuperAdmin = Annotated[AuthContext, Depends(require_super_admin)]
 TenantDB = Annotated[AsyncSession, Depends(tenant_session)]
@@ -183,14 +200,32 @@ def rate_limit(scope: str, setting: str) -> Callable[[Request], Awaitable[None]]
         limit: int = getattr(request.app.state.settings, setting)
         key = f"rl:{scope}:{client_ip(request)}:{int(time.time()) // 60}"
         try:
-            count = await request.app.state.redis.incr(key)
-            if count == 1:
-                await request.app.state.redis.expire(key, 120)
+            count = await throttle.hit(request.app.state.redis, key, 120)
         except RedisError as exc:
             # Fail closed where brute force matters, open elsewhere.
             if scope == "auth":
                 raise ServiceUnavailable("Rate limiter unavailable") from exc
             return
+        if count > limit:
+            raise RateLimited("Too many requests, retry in a minute")
+
+    return dependency
+
+
+def rate_limit_user(scope: str, setting: str) -> Callable[..., Awaitable[None]]:
+    """Fixed one-minute window per authenticated user (costly endpoints).
+
+    Fails closed: these endpoints spend money (LLM calls) or heavy CPU, and an
+    unlimited burst while Redis is down is worse than a short refusal.
+    """
+
+    async def dependency(request: Request, auth: Annotated[AuthContext, Depends(get_auth)]) -> None:
+        limit: int = getattr(request.app.state.settings, setting)
+        key = f"rl:{scope}:user:{auth.user_id}:{int(time.time()) // 60}"
+        try:
+            count = await throttle.hit(request.app.state.redis, key, 120)
+        except RedisError as exc:
+            raise ServiceUnavailable("Rate limiter unavailable") from exc
         if count > limit:
             raise RateLimited("Too many requests, retry in a minute")
 

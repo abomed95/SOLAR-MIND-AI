@@ -3,20 +3,31 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request, Response
 from pydantic import AwareDatetime
 
 from solarmind_api.deps import AuthContext, Perm, TenantDB, get_owned
 from solarmind_api.models import Site
 from solarmind_api.permissions import P
-from solarmind_api.services import energy
+from solarmind_api.services import cache, energy
 
 router = APIRouter(prefix="/energy", tags=["energy"])
 
 
 @router.get("/overview")
-async def overview(s: TenantDB, auth: AuthContext = Perm(P.TELEMETRY_READ)) -> dict[str, Any]:
-    return await energy.overview(s, auth.org)
+async def overview(
+    request: Request, response: Response, s: TenantDB, auth: AuthContext = Perm(P.TELEMETRY_READ)
+) -> dict[str, Any]:
+    """Organization dashboard. Cached for ``cache_ttl_overview_s`` seconds:
+    dashboards poll it, and it integrates a month of telemetry per site."""
+    value, hit = await cache.get_or_compute(
+        request.app.state.redis,
+        cache.key(auth.org, "overview"),
+        request.app.state.settings.cache_ttl_overview_s,
+        lambda: energy.overview(s, auth.org),
+    )
+    response.headers["X-Cache"] = "HIT" if hit else "MISS"
+    return value  # type: ignore[no-any-return]
 
 
 @router.get("/equipment-health")

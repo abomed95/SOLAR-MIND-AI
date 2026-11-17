@@ -14,7 +14,7 @@ from solarmind_api.deps import AppSettings, Auth, AuthContext, Perm, TenantDB, g
 from solarmind_api.errors import RateLimited
 from solarmind_api.models import Device, Site
 from solarmind_api.permissions import P
-from solarmind_api.services import ingestion
+from solarmind_api.services import ingestion, throttle
 from solarmind_api.services import telemetry as svc
 from solarmind_schemas import METRICS, TelemetryBatch
 
@@ -37,13 +37,11 @@ async def ingest_batch(
     digest = hashlib.sha256((x_gateway_key or "").encode()).hexdigest()[:24]
     key = f"rl:ingest:{digest}:{int(time.time()) // 60}"
     try:
-        count = await request.app.state.redis.incr(key)
-        if count == 1:
-            await request.app.state.redis.expire(key, 120)
-        if count > settings.rate_limit_ingest_per_minute:
-            raise RateLimited("Too many ingestion requests")
+        count = await throttle.hit(request.app.state.redis, key, 120)
     except RedisError:
-        pass  # never drop telemetry because the limiter is down
+        count = 0  # never drop telemetry because the limiter is down
+    if count > settings.rate_limit_ingest_per_minute:
+        raise RateLimited("Too many ingestion requests")
 
     gateway = await ingestion.authenticate_gateway(request.app.state.db, x_gateway_key)
     result = await ingestion.ingest_for_gateway(request.app.state.db, settings, gateway, batch)

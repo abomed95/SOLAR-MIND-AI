@@ -6,10 +6,13 @@ back to a credential baked into the source.
 """
 
 from functools import lru_cache
-from typing import Literal
+from ipaddress import IPv4Network, IPv6Network
+from typing import Literal, Self
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+MIN_SECRET_KEY_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -27,6 +30,22 @@ class Settings(BaseSettings):
 
     readiness_timeout_s: float = 2.0
 
+    # --- database pool ---
+    db_pool_size: int = 10
+    db_max_overflow: int = 10
+    db_pool_recycle_s: int = 1800
+    # Upper bound for one SQL statement of the API: a runaway analytics query
+    # is cancelled instead of holding a connection and a CPU indefinitely.
+    db_statement_timeout_ms: int = 15_000
+
+    # --- HTTP edge ---
+    # Reverse proxies whose X-Forwarded-For header is trusted (CIDR). Empty:
+    # the TCP peer is the client. Behind a proxy this MUST be set, otherwise
+    # every user shares the proxy's address and its rate-limit budget.
+    trusted_proxies: list[IPv4Network | IPv6Network] = []
+    max_request_body_bytes: int = 1024 * 1024
+    max_ingest_body_bytes: int = 8 * 1024 * 1024
+
     # --- identity ---
     session_ttl_hours: int = 12
     invitation_ttl_hours: int = 72
@@ -39,6 +58,17 @@ class Settings(BaseSettings):
     rate_limit_auth_per_minute: int = 10
     rate_limit_api_per_minute: int = 600
     rate_limit_ingest_per_minute: int = 600
+    # Per user: each question may call a paid LLM API several times.
+    rate_limit_ai_per_minute: int = 10
+    # Per account, over a sliding 15-minute window, whatever the client IP:
+    # defeats brute force spread over many addresses.
+    login_max_failures: int = 10
+    mfa_max_failures: int = 5
+    account_lock_window_s: int = 900
+
+    # --- read cache (Redis). 0 disables a cache. ---
+    cache_ttl_overview_s: int = 30
+    cache_ttl_insights_s: int = 300
 
     # --- telemetry ---
     max_future_skew_s: int = 300
@@ -74,10 +104,33 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_model: str = "gpt-4o-mini"
     openai_base_url: str = "https://api.openai.com/v1"
+    # Only the most recent messages of a conversation are sent back to the LLM:
+    # bounded cost and latency, whatever the conversation length.
+    ai_history_max_messages: int = 20
 
     @property
     def docs_enabled(self) -> bool:
         return self.environment != "production"
+
+    @property
+    def is_deployed(self) -> bool:
+        return self.environment in ("staging", "production")
+
+    @model_validator(mode="after")
+    def _deployed_settings_are_safe(self) -> Self:
+        """Refuse to start staging/production with settings only fit for a laptop."""
+        if not self.is_deployed:
+            return self
+        problems = []
+        if len(self.secret_key.get_secret_value()) < MIN_SECRET_KEY_LENGTH:
+            problems.append(f"SOLARMIND_SECRET_KEY must be at least {MIN_SECRET_KEY_LENGTH} chars")
+        if not self.cookie_secure:
+            problems.append("SOLARMIND_COOKIE_SECURE must be true (cookies over HTTPS only)")
+        if not self.web_base_url.startswith("https://"):
+            problems.append("SOLARMIND_WEB_BASE_URL must use https:// (links carry tokens)")
+        if problems:
+            raise ValueError("; ".join(problems))
+        return self
 
 
 @lru_cache

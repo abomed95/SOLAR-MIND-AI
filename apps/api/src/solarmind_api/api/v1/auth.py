@@ -16,6 +16,7 @@ from solarmind_api.models import Membership, Organization, Session, User
 from solarmind_api.permissions import permissions_for
 from solarmind_api.security import totp_uri
 from solarmind_api.services import identity
+from solarmind_api.services.throttle import AccountGuard
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _limited = [Depends(rate_limit("auth", "rate_limit_auth_per_minute"))]
@@ -91,6 +92,7 @@ async def login(
         s, settings, request.app.state.secret_box, email=data.email, password=data.password,
         totp_code=data.totp_code, organization_id=data.organization_id, ip=client_ip(request),
         user_agent=request.headers.get("user-agent"),
+        guard=AccountGuard(request.app.state.redis, settings),
     )  # fmt: skip
     return await _login_response(s, request, response, token, session, user)
 

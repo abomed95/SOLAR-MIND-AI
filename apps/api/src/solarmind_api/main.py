@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import APIRouter, Depends, FastAPI, Request, Response
+from fastapi import APIRouter, Depends, FastAPI
 from redis.asyncio import Redis
 
 from solarmind_api.api.v1 import (
@@ -22,6 +22,7 @@ from solarmind_api.db import Database
 from solarmind_api.deps import rate_limit
 from solarmind_api.errors import install_error_handlers
 from solarmind_api.logging import configure_logging
+from solarmind_api.middleware import EdgeMiddleware
 from solarmind_api.security import SecretBox
 from solarmind_api.services.ai import build_provider
 from solarmind_api.services.mail import build_mailer
@@ -34,6 +35,9 @@ _SECURITY_HEADERS = {
     "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
     "Cache-Control": "no-store",
 }
+# Sent only when the deployment is HTTPS (cookie_secure): browsers then refuse
+# plain HTTP for a year, which defeats SSL-stripping on hostile networks.
+_HSTS = "max-age=31536000; includeSubDomains"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -41,7 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(settings.log_level)
 
     # Neither object opens a connection here; both connect lazily on first use.
-    database = Database(settings.database_url.get_secret_value())
+    database = Database.from_settings(settings)
     redis_client = Redis.from_url(settings.redis_url.get_secret_value())
 
     @asynccontextmanager
@@ -71,14 +75,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.probes = {"database": database.ping, "redis": _redis_ping}
 
     install_error_handlers(app)
-
-    @app.middleware("http")
-    async def security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
-        response: Response = await call_next(request)
-        if not request.url.path.startswith("/api/docs"):
-            for name, value in _SECURITY_HEADERS.items():
-                response.headers.setdefault(name, value)
-        return response
+    headers = dict(_SECURITY_HEADERS)
+    if settings.cookie_secure:
+        headers["Strict-Transport-Security"] = _HSTS
+    app.add_middleware(
+        EdgeMiddleware,
+        security_headers=headers,
+        trusted_proxies=settings.trusted_proxies,
+        max_body_bytes=settings.max_request_body_bytes,
+        max_ingest_body_bytes=settings.max_ingest_body_bytes,
+    )
 
     v1 = APIRouter(prefix="/api/v1")
     v1.include_router(health.router)

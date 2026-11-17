@@ -103,6 +103,11 @@ def make_settings(**overrides: object):  # type: ignore[no-untyped-def]
         "rate_limit_auth_per_minute": 10_000,
         "rate_limit_api_per_minute": 100_000,
         "rate_limit_ingest_per_minute": 100_000,
+        "rate_limit_ai_per_minute": 100_000,
+        # Tests assert fresh values right after ingesting: no read cache unless
+        # a test enables it explicitly (tests/integration/test_hardening.py).
+        "cache_ttl_overview_s": 0,
+        "cache_ttl_insights_s": 0,
         "storage_local_path": f"/tmp/solarmind-test-storage-{uuid.uuid4().hex}",  # noqa: S108
     }
     values.update(overrides)

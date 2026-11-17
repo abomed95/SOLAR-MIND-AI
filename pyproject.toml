@@ -27,6 +27,7 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
     "db: needs PostgreSQL/TimescaleDB and Redis (see docs/testing/testing.md)",
+    "settings: Settings overrides for the app built by the `tuned` fixture",
 ]
 
 [tool.ruff]

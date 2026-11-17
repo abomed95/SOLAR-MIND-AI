@@ -6,6 +6,7 @@ and marked FAILED after ``notification_max_attempts``.
 """
 
 import logging
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -56,13 +57,25 @@ def backoff(attempts: int) -> timedelta:
     return timedelta(seconds=min(3600, 30 * 2 ** (attempts - 1)))
 
 
+# A claimed delivery is invisible to other workers for this long. If the
+# worker dies mid-send, the delivery becomes due again after the lease
+# (at-least-once delivery: a crash may cause one duplicate, never a loss).
+CLAIM_LEASE = timedelta(minutes=5)
+
+
 async def dispatch_pending(
     db: Database, settings: Settings, providers: dict[str, ChannelProvider], batch: int = 100
 ) -> dict[str, int]:
+    """Send due deliveries in three short steps: claim, send, record.
+
+    No database transaction (nor row lock, nor pooled connection) is held
+    while talking to SMTP or WhatsApp: a slow provider can no longer pin a
+    connection for the whole batch.
+    """
     counts = {"sent": 0, "retry": 0, "failed": 0}
     now = datetime.now(UTC)
     async with db.system() as s:
-        deliveries = (
+        claimed = (
             await s.scalars(
                 select(NotificationDelivery)
                 .where(
@@ -74,26 +87,42 @@ async def dispatch_pending(
                 .with_for_update(skip_locked=True)  # safe with several workers
             )
         ).all()
-        for delivery in deliveries:
+        jobs = [(d.id, d.channel, d.recipient, d.subject, d.body, d.attempts) for d in claimed]
+        for delivery in claimed:
+            delivery.next_attempt_at = now + CLAIM_LEASE
+    if not jobs:
+        return counts
+
+    outcomes: dict[uuid.UUID, tuple[str, str | None]] = {}
+    for delivery_id, channel, recipient, subject, body, _ in jobs:
+        try:
+            await providers[channel].send(recipient, subject, body)
+        except ProviderNotConfigured as exc:
+            outcomes[delivery_id] = ("unconfigured", str(exc))
+        except Exception as exc:  # noqa: BLE001 - any provider error is retryable
+            outcomes[delivery_id] = ("error", repr(exc)[:500])
+        else:
+            outcomes[delivery_id] = ("sent", None)
+
+    async with db.system() as s:
+        rows = await s.scalars(
+            select(NotificationDelivery).where(NotificationDelivery.id.in_(list(outcomes)))
+        )
+        for delivery in rows:
+            outcome, error = outcomes[delivery.id]
             delivery.attempts += 1
-            try:
-                await providers[delivery.channel].send(
-                    delivery.recipient, delivery.subject, delivery.body
-                )
-            except ProviderNotConfigured as exc:
-                delivery.status, delivery.last_error = DeliveryStatus.FAILED, str(exc)
-                counts["failed"] += 1
-            except Exception as exc:  # noqa: BLE001 - any provider error is retryable
-                delivery.last_error = repr(exc)[:500]
-                if delivery.attempts >= settings.notification_max_attempts:
-                    delivery.status = DeliveryStatus.FAILED
-                    counts["failed"] += 1
-                else:
-                    delivery.next_attempt_at = now + backoff(delivery.attempts)
-                    counts["retry"] += 1
-            else:
-                delivery.status, delivery.last_error = DeliveryStatus.SENT, None
+            delivery.last_error = error
+            if outcome == "sent":
+                delivery.status = DeliveryStatus.SENT
                 counts["sent"] += 1
+            elif (
+                outcome == "unconfigured" or delivery.attempts >= settings.notification_max_attempts
+            ):
+                delivery.status = DeliveryStatus.FAILED
+                counts["failed"] += 1
+            else:
+                delivery.next_attempt_at = datetime.now(UTC) + backoff(delivery.attempts)
+                counts["retry"] += 1
     if any(counts.values()):
         logger.info("notifications dispatched", extra=counts)
     return counts

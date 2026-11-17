@@ -10,6 +10,7 @@ from sqlalchemy import select
 from solarmind_api import schemas as sc
 from solarmind_api.deps import (
     AuthContext,
+    BustCache,
     Page,
     Paging,
     Perm,
@@ -66,7 +67,7 @@ async def list_sites(
     return page(items, total, params)
 
 
-@sites.post("", response_model=sc.SiteOut, status_code=201)
+@sites.post("", response_model=sc.SiteOut, status_code=201, dependencies=[BustCache])
 async def create_site(
     data: sc.SiteCreate, request: Request, s: TenantDB, auth: AuthContext = Perm(P.SITES_WRITE)
 ) -> Any:
@@ -86,7 +87,7 @@ async def get_site(site_id: uuid.UUID, s: TenantDB, auth: AuthContext = Perm(P.S
     return await get_owned(s, Site, site_id, auth.org)
 
 
-@sites.patch("/{site_id}", response_model=sc.SiteOut)
+@sites.patch("/{site_id}", response_model=sc.SiteOut, dependencies=[BustCache])
 async def update_site(
     site_id: uuid.UUID, data: sc.SiteUpdate, request: Request, s: TenantDB,
     auth: AuthContext = Perm(P.SITES_WRITE),
@@ -100,7 +101,7 @@ async def update_site(
     return site
 
 
-@sites.delete("/{site_id}", status_code=status.HTTP_204_NO_CONTENT)
+@sites.delete("/{site_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[BustCache])
 async def delete_site(
     site_id: uuid.UUID, request: Request, s: TenantDB, auth: AuthContext = Perm(P.SITES_WRITE)
 ) -> None:
@@ -207,7 +208,7 @@ async def list_devices(
     return page([_device_out(d, intervals.get(d.site_id, 300), now) for d in items], total, params)
 
 
-@devices.post("", response_model=sc.DeviceOut, status_code=201)
+@devices.post("", response_model=sc.DeviceOut, status_code=201, dependencies=[BustCache])
 async def create_device(
     data: sc.DeviceCreate, request: Request, s: TenantDB, auth: AuthContext = Perm(P.DEVICES_WRITE)
 ) -> Any:
@@ -233,7 +234,7 @@ async def get_device(
     return _device_out(device, intervals.get(device.site_id, 300), datetime.now(UTC))
 
 
-@devices.patch("/{device_id}", response_model=sc.DeviceOut)
+@devices.patch("/{device_id}", response_model=sc.DeviceOut, dependencies=[BustCache])
 async def update_device(
     device_id: uuid.UUID, data: sc.DeviceUpdate, s: TenantDB,
     auth: AuthContext = Perm(P.DEVICES_WRITE),
@@ -245,7 +246,7 @@ async def update_device(
     return _device_out(device, intervals.get(device.site_id, 300), datetime.now(UTC))
 
 
-@devices.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT)
+@devices.delete("/{device_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[BustCache])
 async def delete_device(
     device_id: uuid.UUID, request: Request, s: TenantDB, auth: AuthContext = Perm(P.DEVICES_WRITE)
 ) -> None:

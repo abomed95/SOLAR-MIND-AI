@@ -12,6 +12,9 @@ Every figure is tagged with its nature:
 
 import uuid
 from collections import defaultdict
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -90,11 +93,33 @@ class DailyValue:
     covered_s: float
 
 
+# Request-scoped memo of ``daily_integrals``. The integral is the most
+# expensive query of the platform (a window function over every sample of the
+# period); one analysis pass asks for the same window several times.
+_MEMO: ContextVar[dict[tuple[Any, ...], list["DailyValue"]] | None] = ContextVar(
+    "daily_integrals_memo", default=None
+)
+
+
+@contextmanager
+def memoized() -> Iterator[None]:
+    """Within this block, identical ``daily_integrals`` calls hit the database once."""
+    token = _MEMO.set({})
+    try:
+        yield
+    finally:
+        _MEMO.reset(token)
+
+
 async def daily_integrals(
     s: AsyncSession, org: uuid.UUID, site_ids: list[uuid.UUID], start: datetime, end: datetime
 ) -> list[DailyValue]:
     if not site_ids:
         return []
+    memo = _MEMO.get()
+    memo_key = (org, tuple(sorted(site_ids)), start, end)
+    if memo is not None and memo_key in memo:
+        return memo[memo_key]
     rows = await s.execute(
         _DAILY_SQL,
         {"org": org, "sites": site_ids, "metrics": list(ENERGY_METRICS), "start": start,
@@ -108,6 +133,8 @@ async def daily_integrals(
         else:
             total = float(r.sum_total)  # several devices add up
         out.append(DailyValue(r.site_id, r.metric_name, r.day, total, float(r.covered_s)))
+    if memo is not None:
+        memo[memo_key] = out
     return out
 
 

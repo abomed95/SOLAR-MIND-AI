@@ -3,28 +3,36 @@
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
 
 from solarmind_api import schemas as sc
-from solarmind_api.deps import AuthContext, Perm, TenantDB, get_owned
+from solarmind_api.deps import AuthContext, Perm, TenantDB, get_owned, rate_limit_user
 from solarmind_api.errors import NotFound
 from solarmind_api.models import AIConversation, AIMessage, Site
 from solarmind_api.permissions import P
 from solarmind_api.plans import Feature
-from solarmind_api.services import ai, billing
+from solarmind_api.services import ai, billing, cache
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 
-@router.post("/ask", response_model=sc.AskOut)
+@router.post(
+    "/ask",
+    response_model=sc.AskOut,
+    dependencies=[Depends(rate_limit_user("ai", "rate_limit_ai_per_minute"))],
+)
 async def ask(
     data: sc.AskIn, request: Request, s: TenantDB, auth: AuthContext = Perm(P.AI_USE)
 ) -> sc.AskOut:
-    """Ask the assistant. It answers only from the caller's authorized data."""
+    """Ask the assistant. It answers only from the caller's authorized data.
+
+    Limited per user (``rate_limit_ai_per_minute``): each question may trigger
+    several paid LLM calls."""
     conversation, message = await ai.ask(
-        s, request.app.state.llm_provider, auth, data.question, data.conversation_id
-    )
+        s, request.app.state.llm_provider, auth, data.question, data.conversation_id,
+        history_limit=request.app.state.settings.ai_history_max_messages,
+    )  # fmt: skip
     return sc.AskOut(
         conversation_id=conversation.id, message=sc.AIMessageOut.model_validate(message)
     )
@@ -64,15 +72,27 @@ async def messages(
 
 @router.get("/insights/sites/{site_id}")
 async def site_insights(
-    site_id: uuid.UUID, s: TenantDB, auth: AuthContext = Perm(P.TELEMETRY_READ)
-) -> dict[str, Any]:
-    """Outputs of the analysis agents for one site (rule-based; no LLM)."""
+    site_id: uuid.UUID, request: Request, response: Response, s: TenantDB,
+    auth: AuthContext = Perm(P.TELEMETRY_READ),
+) -> dict[str, Any]:  # fmt: skip
+    """Outputs of the analysis agents for one site (rule-based; no LLM).
+
+    Cached for ``cache_ttl_insights_s`` seconds: it scans 30 days of telemetry
+    and the analyses work on daily figures, which barely move in minutes."""
     site = await get_owned(s, Site, site_id, auth.org)
     entitlements = await billing.get_entitlements(s, auth.org)
     statistical = (
         entitlements.state != "EXPIRED" and Feature.ANOMALY_DETECTION in entitlements.spec.features
     )
-    return await ai.site_insights(s, auth.org, site, statistical=statistical)
+    value, hit = await cache.get_or_compute(
+        request.app.state.redis,
+        # The plan decides whether the statistical scan runs: part of the key.
+        cache.key(auth.org, "insights", site.id, "stat" if statistical else "rules"),
+        request.app.state.settings.cache_ttl_insights_s,
+        lambda: ai.site_insights(s, auth.org, site, statistical=statistical),
+    )
+    response.headers["X-Cache"] = "HIT" if hit else "MISS"
+    return value  # type: ignore[no-any-return]
 
 
 @router.get("/insights/priorities")

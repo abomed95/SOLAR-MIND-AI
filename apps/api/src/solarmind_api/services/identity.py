@@ -35,6 +35,7 @@ from solarmind_api.security import (
 from solarmind_api.services import billing
 from solarmind_api.services.audit import audit
 from solarmind_api.services.mail import Mailer
+from solarmind_api.services.throttle import AccountGuard
 
 
 def _now() -> datetime:
@@ -136,14 +137,20 @@ async def register(
 async def login(
     s: AsyncSession, settings: Settings, box: SecretBox, *, email: str, password: str,
     totp_code: str | None, organization_id: uuid.UUID | None, ip: str | None,
-    user_agent: str | None,
+    user_agent: str | None, guard: AccountGuard | None = None,
 ) -> tuple[str, Session, User]:  # fmt: skip
+    # Locked accounts are refused before any password work: no Argon2 cost,
+    # and no way to keep testing passwords during the lock.
+    if guard is not None:
+        await guard.check_login(email)
     user = await s.scalar(select(User).where(User.email == email))
     # Same code path and message whether the account exists or not.
     if not verify_password(user.password_hash if user else None, password) or user is None:
         audit(s, action="auth.login_failed", organization_id=None, actor_id=None,
               details={"email": email}, ip=ip)  # fmt: skip
         await s.commit()
+        if guard is not None:
+            await guard.login_failed(email)
         raise Unauthorized("Invalid e-mail or password", code="invalid_credentials")
     if not user.is_active:
         raise Unauthorized("Account disabled", code="account_disabled")
@@ -151,11 +158,20 @@ async def login(
     if user.mfa_enabled:
         if totp_code is None:
             raise Unauthorized("MFA code required", code="mfa_required")
+        if guard is not None:
+            await guard.check_mfa(user.id)
         secret = box.decrypt(user.mfa_secret_encrypted or "")
-        if secret is None or not verify_totp(secret, totp_code):
+        valid = secret is not None and verify_totp(secret, totp_code)
+        if valid and guard is not None and not await guard.claim_totp(user.id, totp_code):
+            valid = False  # replay of a code already used
+        if not valid:
             audit(s, action="auth.mfa_failed", organization_id=None, actor_id=user.id, ip=ip)
             await s.commit()
+            if guard is not None:
+                await guard.mfa_failed(user.id)
             raise Unauthorized("Invalid MFA code", code="mfa_invalid")
+    if guard is not None:
+        await guard.succeeded(email, user.id)
 
     memberships = (
         (

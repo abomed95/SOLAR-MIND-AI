@@ -7,6 +7,9 @@ never reach another tenant's rows or run a query of its own.
 """
 
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -52,8 +55,29 @@ PRIMARY_METRIC = {
 MIN_DAY_COVERAGE = 0.2
 
 
+# One analysis pass reads the clock once: its windows then line up exactly,
+# so the agents share the same integrals (see ``energy.memoized``) and all
+# describe the same instant.
+_CLOCK: ContextVar[datetime | None] = ContextVar("analysis_clock", default=None)
+
+
+def _now() -> datetime:
+    return _CLOCK.get() or datetime.now(UTC)
+
+
+@contextmanager
+def analysis_scope() -> Iterator[datetime]:
+    now = datetime.now(UTC)
+    token = _CLOCK.set(now)
+    try:
+        with energy.memoized():
+            yield now
+    finally:
+        _CLOCK.reset(token)
+
+
 def _window(days: int) -> tuple[datetime, datetime]:
-    end = datetime.now(UTC)
+    end = _now()
     return end - timedelta(days=days), end
 
 
@@ -80,7 +104,7 @@ async def data_quality(
     s: AsyncSession, org: uuid.UUID, site: Site, hours: int = 24
 ) -> dict[str, Any]:
     """Agent 1 over the primary metric of each device of the site."""
-    end = datetime.now(UTC)
+    end = _now()
     start = end - timedelta(hours=hours)
     devices = await s.scalars(
         select(Device)
@@ -229,20 +253,21 @@ async def maintenance_risk(s: AsyncSession, org: uuid.UUID, site: Site) -> dict[
     )
     history_days = (end - first).days if first else 0
 
-    async def alerts(*where: Any) -> int:
-        return (
-            await s.scalar(
-                select(func.count())
-                .select_from(Alert)
-                .where(
-                    Alert.organization_id == org,
-                    Alert.site_id == site.id,
-                    Alert.first_seen_at >= start,
-                    *where,
-                )  # fmt: skip
+    # The four alert counts of the period in one scan.
+    counts = (
+        await s.execute(
+            select(
+                func.count().filter(Alert.severity == Severity.CRITICAL),
+                func.count().filter(Alert.severity == Severity.HIGH),
+                func.count().filter(Alert.category == AlertCategory.TEMPERATURE),
+                func.count().filter(Alert.category == AlertCategory.COMMUNICATION),
+            ).where(
+                Alert.organization_id == org,
+                Alert.site_id == site.id,
+                Alert.first_seen_at >= start,
             )
-            or 0
         )
+    ).one()
 
     indicator, _ = _daily_indicator(
         await daily_energy(s, org, site, start, end), site.installed_capacity_kwp
@@ -261,10 +286,10 @@ async def maintenance_risk(s: AsyncSession, org: uuid.UUID, site: Site) -> dict[
     risk = predictive.assess_risk(
         predictive.MaintenanceInputs(
             history_days=history_days,
-            critical_alerts_30d=await alerts(Alert.severity == Severity.CRITICAL),
-            high_alerts_30d=await alerts(Alert.severity == Severity.HIGH),
-            temperature_alerts_30d=await alerts(Alert.category == AlertCategory.TEMPERATURE),
-            communication_losses_30d=await alerts(Alert.category == AlertCategory.COMMUNICATION),
+            critical_alerts_30d=counts[0],
+            high_alerts_30d=counts[1],
+            temperature_alerts_30d=counts[2],
+            communication_losses_30d=counts[3],
             degradation_drop=degradation.evidence["relative_drop"] if degradation else None,
             availability_30d=availability,
             open_tickets=open_tickets or 0,
@@ -320,19 +345,20 @@ async def site_insights(
     s: AsyncSession, org: uuid.UUID, site: Site, *, statistical: bool
 ) -> dict[str, Any]:
     """Everything agents 1 to 5 have to say about a site."""
-    found = await anomalies(s, org, site, statistical=statistical)
-    found.pop("degradation")
-    return {
-        "site_id": site.id,
-        "site": site.name,
-        "simulated": site.is_simulated,
-        "generated_at": datetime.now(UTC),
-        "data_quality": await data_quality(s, org, site),
-        "performance": await performance_report(s, org, site, 7),
-        "anomalies": found,
-        "maintenance_risk": await maintenance_risk(s, org, site),
-        "recommendations": await recommendations(s, org, site),
-    }
+    with analysis_scope() as now:
+        found = await anomalies(s, org, site, statistical=statistical)
+        found.pop("degradation")
+        return {
+            "site_id": site.id,
+            "site": site.name,
+            "simulated": site.is_simulated,
+            "generated_at": now,
+            "data_quality": await data_quality(s, org, site),
+            "performance": await performance_report(s, org, site, 7),
+            "anomalies": found,
+            "maintenance_risk": await maintenance_risk(s, org, site),
+            "recommendations": await recommendations(s, org, site),
+        }
 
 
 # --------------------------------------------------------------------------- assistant tools
@@ -520,7 +546,7 @@ def build_provider(settings: Settings) -> LLMProvider:
 
 async def ask(
     s: AsyncSession, provider: LLMProvider, auth: AuthContext, question: str,
-    conversation_id: uuid.UUID | None,
+    conversation_id: uuid.UUID | None, *, history_limit: int = 20,
 ) -> tuple[AIConversation, AIMessage]:  # fmt: skip
     await billing.ensure_feature(s, auth.org, Feature.AI_ASSISTANT)
     if conversation_id is None:
@@ -542,16 +568,20 @@ async def ask(
         if found is None:
             raise NotFound("Conversation not found")
         conversation = found
+        # Only the latest messages go back to the model: cost and latency stay
+        # bounded however long the conversation grows.
         previous = await s.scalars(
             select(AIMessage)
             .where(
                 AIMessage.conversation_id == conversation.id, AIMessage.organization_id == auth.org
             )
-            .order_by(AIMessage.created_at, AIMessage.id)
+            .order_by(AIMessage.created_at.desc(), AIMessage.id.desc())
+            .limit(history_limit)
         )
-        history = [{"role": m.role, "content": m.content} for m in previous]
+        history = [{"role": m.role, "content": m.content} for m in reversed(previous.all())]
 
-    answer = await Assistant(provider).answer(question, build_tools(s, auth), history)
+    with analysis_scope():
+        answer = await Assistant(provider).answer(question, build_tools(s, auth), history)
     # Both rows are written in one transaction, where now() is constant:
     # explicit timestamps keep the question strictly before its answer.
     asked_at = datetime.now(UTC)

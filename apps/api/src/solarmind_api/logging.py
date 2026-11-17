@@ -6,6 +6,8 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
+from solarmind_api.middleware import request_id_var
+
 _RESERVED = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
 
 
@@ -19,6 +21,9 @@ class JsonFormatter(logging.Formatter):
         }
         # Anything passed through ``extra=`` becomes a top-level field.
         payload.update({k: v for k, v in record.__dict__.items() if k not in _RESERVED})
+        request_id = request_id_var.get()
+        if request_id is not None:
+            payload.setdefault("request_id", request_id)
         if record.exc_info:
             payload["exc"] = self.formatException(record.exc_info)
         return json.dumps(payload, default=str)

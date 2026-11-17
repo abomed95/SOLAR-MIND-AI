@@ -12,7 +12,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import func, select, update
+from sqlalchemy import DateTime, column, func, select, update, values
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -147,12 +148,23 @@ async def ingest(
     result.duplicates += len(rows) - len(stored)
     result.rows = [r for r in rows if (r["device_id"], r["metric_name"], r["time"]) in stored]
 
-    for device_id, seen_at in latest.items():
+    if latest:
+        # One UPDATE ... FROM (VALUES ...) for the whole batch instead of one
+        # statement per device. GREATEST keeps late (buffered) data from
+        # moving last_seen_at backwards.
+        seen_at_by_device = values(
+            column("id", PG_UUID(as_uuid=True)),
+            column("seen_at", DateTime(timezone=True)),
+            name="seen",
+        ).data(list(latest.items()))
         await s.execute(
             update(Device)
-            .where(Device.id == device_id)
+            .where(Device.id == seen_at_by_device.c.id)
             .values(
-                last_seen_at=func.greatest(func.coalesce(Device.last_seen_at, seen_at), seen_at)
+                last_seen_at=func.greatest(
+                    func.coalesce(Device.last_seen_at, seen_at_by_device.c.seen_at),
+                    seen_at_by_device.c.seen_at,
+                )
             )
         )
     await s.execute(
